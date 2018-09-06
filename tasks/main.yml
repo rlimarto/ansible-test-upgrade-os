@@ -1,2 +1,47 @@
----
-# tasks file for ansible-test-upgrade-os-2
+- name: "Update operating system on Ubuntu"
+  apt:
+    upgrade: safe
+  when: ansible_distribution == "Ubuntu"
+
+- name: "Update operating system on Fedora"
+  dnf:
+    name: "*"
+    state: latest
+  when: ansible_distribution == "Fedora"
+
+- name: "Check for reboot hint on Ubuntu"
+  shell: LAST_KERNEL=$(dpkg --list | grep 'linux-image-[0-9]-*' | sort -r | awk 'NR==1{sub(/linux-image-/,""); print $2}'); CURRENT_KERNEL=$(uname -r); if [ $LAST_KERNEL != $CURRENT_KERNEL ]; then echo 'reboot'; else echo 'no'; fi
+  ignore_errors: true
+  register: reboothint
+  when: ansible_distribution == "Ubuntu"
+
+- set_fact: reboot_hint="{{reboothint}}"
+  when: reboothint.changed
+
+- name: "Check for reboot hint on Fedora"
+  shell: LAST_KERNEL=$(rpm -q --last kernel | awk 'NR==1{sub(/kernel-/,""); print $1}'); CURRENT_KERNEL=$(uname -r); if [ $LAST_KERNEL != $CURRENT_KERNEL ]; then echo 'reboot'; else echo 'no'; fi
+  ignore_errors: true
+  register: reboothint
+  when: ansible_distribution == "Fedora"
+
+- set_fact: reboot_hint="{{reboothint}}"
+  when: reboothint.changed
+
+- name: "Reboot server"
+  shell: sleep 5 && /sbin/shutdown -r now
+  async: 1
+  poll: 0
+  ignore_errors: true
+  when: reboot_hint.stdout.find("reboot") != -1
+
+- name: "Waiting for server after reboot"
+  local_action: 
+    module: wait_for
+      host="{{ targethost }}"
+      port=22
+      delay=30
+      timeout=300
+      connect_timeout=15
+    state: started
+  become: no
+  when: reboot_hint.stdout.find("reboot") != -1
